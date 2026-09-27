@@ -1,13 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mic, MicOff, Send, Volume2, VolumeX, Activity, Radio, Sparkles, ShieldCheck, Link2, RotateCcw } from 'lucide-react'
+import {
+  Activity,
+  BarChart3,
+  Bot,
+  ChevronLeft,
+  Command,
+  Gauge,
+  Link2,
+  MessageSquare,
+  Mic,
+  MicOff,
+  Radio,
+  RotateCcw,
+  Send,
+  Settings2,
+  Sparkles,
+  Volume2,
+  VolumeX,
+  Waves,
+  X,
+} from 'lucide-react'
 
 const DEFAULT_WEBHOOK =
   (import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined)?.trim() ||
   'https://akpackfitness.app.n8n.cloud/webhook/friday-core'
-
 const WEBHOOK_STORAGE_KEY = 'friday-n8n-webhook-url'
 
 type Message = { role: 'user' | 'friday'; text: string; time: string }
+type View = 'friday' | 'chat' | 'handsfree' | 'dashboard'
 type InputMode = 'text' | 'voice'
 
 const now = () =>
@@ -16,13 +36,13 @@ const now = () =>
 const getSessionId = () => {
   const key = 'friday-session-id'
   try {
-    const existing = window.localStorage.getItem(key)
+    const existing = localStorage.getItem(key)
     if (existing) return existing
     const created =
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
         : `friday-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    window.localStorage.setItem(key, created)
+    localStorage.setItem(key, created)
     return created
   } catch {
     return `friday-${Date.now()}`
@@ -31,13 +51,13 @@ const getSessionId = () => {
 
 const getSavedWebhook = () => {
   try {
-    return window.localStorage.getItem(WEBHOOK_STORAGE_KEY)?.trim() || DEFAULT_WEBHOOK
+    return localStorage.getItem(WEBHOOK_STORAGE_KEY)?.trim() || DEFAULT_WEBHOOK
   } catch {
     return DEFAULT_WEBHOOK
   }
 }
 
-const isValidWebhookUrl = (value: string) => {
+const validUrl = (value: string) => {
   try {
     const url = new URL(value)
     return url.protocol === 'https:' || url.protocol === 'http:'
@@ -47,10 +67,11 @@ const isValidWebhookUrl = (value: string) => {
 }
 
 export default function App() {
+  const [view, setView] = useState<View>('friday')
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'friday',
-      text: "I'm online. Tap the mic or say something — hands-free mode is ready.",
+      text: "I'm online. I'm ready when you are.",
       time: now(),
     },
   ])
@@ -59,10 +80,10 @@ export default function App() {
   const [handsFree, setHandsFree] = useState(false)
   const [speaking, setSpeaking] = useState(true)
   const [status, setStatus] = useState<'ready' | 'thinking' | 'error'>('ready')
-  const [latency, setLatency] = useState<number | null>(null)
   const [webhookUrl, setWebhookUrl] = useState(DEFAULT_WEBHOOK)
   const [webhookDraft, setWebhookDraft] = useState(DEFAULT_WEBHOOK)
   const [webhookError, setWebhookError] = useState('')
+  const [latency, setLatency] = useState<number | null>(null)
   const recognitionRef = useRef<any>(null)
   const handsFreeRef = useRef(false)
   const sessionIdRef = useRef('')
@@ -78,51 +99,24 @@ export default function App() {
     handsFreeRef.current = handsFree
   }, [handsFree])
 
-  const saveWebhook = () => {
-    const value = webhookDraft.trim()
-    if (!isValidWebhookUrl(value)) {
-      setWebhookError('Enter a valid http:// or https:// n8n webhook URL.')
-      return
-    }
-    setWebhookUrl(value)
-    setWebhookDraft(value)
-    setWebhookError('')
-    try {
-      window.localStorage.setItem(WEBHOOK_STORAGE_KEY, value)
-    } catch {
-      // The active URL still works for this session if storage is unavailable.
-    }
-    setStatus('ready')
-    addFridayMessage(`Webhook updated. Friday is now connected to ${value}`)
-  }
-
-  const resetWebhook = () => {
-    setWebhookDraft(DEFAULT_WEBHOOK)
-    setWebhookUrl(DEFAULT_WEBHOOK)
-    setWebhookError('')
-    try {
-      window.localStorage.removeItem(WEBHOOK_STORAGE_KEY)
-    } catch {
-      // Ignore storage errors.
-    }
-    setStatus('ready')
-    addFridayMessage('Webhook reset to the default Friday Core endpoint.')
-  }
+  const addFriday = (text: string) =>
+    setMessages((current) => [
+      ...current,
+      { role: 'friday', text, time: now() },
+    ])
 
   const say = (text: string) => {
     if (!speaking || !('speechSynthesis' in window)) return
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 1
+    utterance.rate = 0.98
     utterance.pitch = 1
+    utterance.onstart = () => setView('handsfree')
+    utterance.onend = () => {
+      if (handsFreeRef.current) setView('handsfree')
+      else setView('friday')
+    }
     window.speechSynthesis.speak(utterance)
-  }
-
-  const addFridayMessage = (text: string) => {
-    setMessages((current) => [
-      ...current,
-      { role: 'friday', text, time: now() },
-    ])
   }
 
   const send = async (forced?: string, inputMode: InputMode = 'text') => {
@@ -130,15 +124,15 @@ export default function App() {
     if (!message || status === 'thinking') return
 
     setInput('')
+    setView(inputMode === 'voice' ? 'handsfree' : 'chat')
     setMessages((current) => [
       ...current,
       { role: 'user', text: message, time: now() },
     ])
     setStatus('thinking')
 
-    const started = performance.now()
-
     try {
+      const started = performance.now()
       const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -152,7 +146,6 @@ export default function App() {
 
       const contentType = response.headers.get('content-type') || ''
       const raw = await response.text()
-
       if (!response.ok) {
         let detail = ''
         if (contentType.includes('application/json')) {
@@ -163,9 +156,7 @@ export default function App() {
             detail = ''
           }
         }
-        throw new Error(
-          detail || `Friday webhook returned HTTP ${response.status}.`,
-        )
+        throw new Error(detail || `Friday webhook returned HTTP ${response.status}.`)
       }
 
       let data: any = raw
@@ -184,23 +175,22 @@ export default function App() {
         data?.text ??
         (typeof data === 'string' ? data : '')
 
-      if (!reply) {
-        throw new Error('Friday returned no response text.')
-      }
+      if (!reply) throw new Error('Friday returned no response text.')
 
       const text = String(reply)
       setLatency(Math.round(performance.now() - started))
-      addFridayMessage(text)
-      say(text)
+      addFriday(text)
       setStatus('ready')
+      say(text)
     } catch (error) {
       const text =
         error instanceof Error && error.message
           ? error.message
-          : 'I could not reach the Friday webhook. Check the n8n endpoint and browser connection.'
-      addFridayMessage(text)
+          : 'I could not reach the Friday webhook.'
+      addFriday(text)
       setStatus('error')
       say(text)
+      if (inputMode === 'voice') setView('handsfree')
     }
   }
 
@@ -211,44 +201,33 @@ export default function App() {
 
     if (!SR) {
       setStatus('error')
-      addFridayMessage(
-        'Speech recognition is not supported in this browser. Use Chrome or Edge.',
-      )
+      addFriday('Speech recognition is not supported here. Use Chrome or Edge.')
       return
     }
 
-    if (recognitionRef.current) {
-      recognitionRef.current.stop()
-    }
-
+    recognitionRef.current?.stop()
     const recognition = new SR()
     recognitionRef.current = recognition
     recognition.lang = 'en-IN'
     recognition.continuous = handsFreeRef.current
     recognition.interimResults = true
 
-    recognition.onstart = () => setListening(true)
+    recognition.onstart = () => {
+      setListening(true)
+      setView('handsfree')
+      setStatus('ready')
+    }
     recognition.onend = () => {
       setListening(false)
-      if (handsFreeRef.current) {
-        window.setTimeout(startListening, 350)
-      }
+      if (handsFreeRef.current) window.setTimeout(startListening, 350)
     }
     recognition.onerror = () => setListening(false)
     recognition.onresult = (event: any) => {
       let finalText = ''
-      for (
-        let index = event.resultIndex;
-        index < event.results.length;
-        index += 1
-      ) {
-        if (event.results[index].isFinal) {
-          finalText += event.results[index][0].transcript
-        }
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        if (event.results[i].isFinal) finalText += event.results[i][0].transcript
       }
-      if (finalText.trim()) {
-        void send(finalText, 'voice')
-      }
+      if (finalText.trim()) void send(finalText, 'voice')
     }
 
     try {
@@ -262,17 +241,41 @@ export default function App() {
     handsFreeRef.current = false
     recognitionRef.current?.stop()
     setListening(false)
+    setHandsFree(false)
   }
 
   const toggleHandsFree = () => {
     const next = !handsFree
     setHandsFree(next)
     handsFreeRef.current = next
-    if (next) {
-      startListening()
-    } else {
-      stopListening()
+    if (next) startListening()
+    else stopListening()
+  }
+
+  const saveWebhook = () => {
+    const value = webhookDraft.trim()
+    if (!validUrl(value)) {
+      setWebhookError('Enter a valid http:// or https:// webhook URL.')
+      return
     }
+    setWebhookUrl(value)
+    setWebhookDraft(value)
+    setWebhookError('')
+    try {
+      localStorage.setItem(WEBHOOK_STORAGE_KEY, value)
+    } catch {}
+    addFriday('Webhook updated. I’m ready on the new endpoint.')
+    setView('friday')
+  }
+
+  const resetWebhook = () => {
+    setWebhookDraft(DEFAULT_WEBHOOK)
+    setWebhookUrl(DEFAULT_WEBHOOK)
+    setWebhookError('')
+    try {
+      localStorage.removeItem(WEBHOOK_STORAGE_KEY)
+    } catch {}
+    addFriday('Webhook reset to my default Friday Core endpoint.')
   }
 
   useEffect(
@@ -283,177 +286,169 @@ export default function App() {
     [],
   )
 
-  return (
-    <div className="app">
-      <div className="orb orb-a" />
-      <div className="orb orb-b" />
+  const lastFriday = [...messages].reverse().find((m) => m.role === 'friday')
+  const isActive = listening || status === 'thinking' || (speaking && 'speechSynthesis' in window && window.speechSynthesis.speaking)
 
-      <header className="topbar glass">
-        <div className="brand">
-          <div className="brand-mark">
-            <Sparkles size={18} />
-          </div>
-          <div>
-            <b>FRIDAY</b>
-            <span>AI COMMAND CENTER</span>
-          </div>
+  return (
+    <div className={`app view-${view}`}>
+      <div className="ambient ambient-a" />
+      <div className="ambient ambient-b" />
+
+      <header className="topbar">
+        <button className="brand" onClick={() => setView('friday')} type="button">
+          <span className="brand-mark"><Sparkles size={17} /></span>
+          <span><b>FRIDAY</b><small>AI COMMAND CENTER</small></span>
+        </button>
+
+        <div className="status-pill">
+          <i className={status === 'error' ? 'bad' : ''} />
+          {status === 'thinking' ? 'THINKING' : status === 'error' ? 'CHECK CONNECTION' : 'ONLINE'}
+          {latency ? <em>{latency}ms</em> : null}
         </div>
-        <div className="live">
-          <i />
-          {status === 'thinking'
-            ? 'THINKING'
-            : status === 'error'
-              ? 'CONNECTION ISSUE'
-              : 'ONLINE'}
-          <span>{latency ? `${latency} ms` : ''}</span>
-        </div>
+
+        <button className="icon-btn" onClick={() => setView('dashboard')} aria-label="Open dashboard" type="button">
+          <Settings2 size={19} />
+        </button>
       </header>
 
-      <main>
-        <section className="hero">
-          <div className="eyebrow">
-            <Radio size={14} /> PRIVATE VOICE INTERFACE
-          </div>
-          <h1>
-            Talk to <span>Friday.</span>
-          </h1>
-          <p>
-            Hands-free control for your automation brain. Speak naturally, and
-            Friday routes the work through your n8n command layer.
-          </p>
-
-          <div
-            className={`core ${listening ? 'listening' : ''}${status === 'thinking' ? ' thinking' : ''}`}
-          >
-            <div className="core-ring ring1" />
-            <div className="core-ring ring2" />
-            <div className="core-dot">
-              <Activity size={34} />
-            </div>
+      {view === 'dashboard' ? (
+        <main className="dashboard-page">
+          <div className="page-title">
+            <button className="back-btn" onClick={() => setView('friday')} type="button"><ChevronLeft size={17} /> Friday</button>
+            <span className="section-kicker">COMMAND CENTER</span>
+            <h1>Dashboard</h1>
+            <p>Control Friday’s connection without interrupting the conversation.</p>
           </div>
 
-          <div className="controls">
-            <button
-              className={`mic ${listening ? 'active' : ''}`}
-              onClick={listening ? stopListening : startListening}
-              aria-label="Voice input"
-              type="button"
-            >
-              {listening ? <MicOff /> : <Mic />}
-            </button>
-
-            <button
-              className={`glass-btn ${handsFree ? 'selected' : ''}`}
-              onClick={toggleHandsFree}
-              type="button"
-            >
-              <Radio size={17} /> {handsFree ? 'Hands-free ON' : 'Hands-free mode'}
-            </button>
-
-            <button
-              className="glass-btn"
-              onClick={() => setSpeaking((value) => !value)}
-              type="button"
-            >
-              {speaking ? <Volume2 size={17} /> : <VolumeX size={17} />} Voice{' '}
-              {speaking ? 'ON' : 'OFF'}
-            </button>
-          </div>
-        </section>
-
-        <section className="webhook-panel glass">
-          <div className="webhook-title">
-            <div>
+          <section className="dashboard-grid">
+            <div className="dash-card connection-card">
+              <div className="card-icon"><Link2 size={20} /></div>
               <span className="section-kicker">N8N CONNECTION</span>
-              <h2>Webhook endpoint</h2>
+              <h2>Webhook URL</h2>
+              <p>Paste any n8n webhook here. Friday will use it for the next command.</p>
+              <div className="url-editor">
+                <input
+                  value={webhookDraft}
+                  onChange={(e) => { setWebhookDraft(e.target.value); setWebhookError('') }}
+                  placeholder="https://your-n8n-domain/webhook/..."
+                  aria-label="n8n webhook URL"
+                  spellCheck={false}
+                  inputMode="url"
+                />
+                <button onClick={saveWebhook} type="button"><Link2 size={16} /> Connect</button>
+              </div>
+              {webhookError ? <div className="form-error">{webhookError}</div> : null}
+              <div className="current-url"><i /> Active · {webhookUrl}</div>
+              <button className="secondary-btn" onClick={resetWebhook} type="button"><RotateCcw size={15} /> Reset default</button>
             </div>
-            <div className="secure">
-              <Link2 size={15} /> {webhookUrl}
-            </div>
-          </div>
-          <div className="webhook-form">
-            <input
-              value={webhookDraft}
-              onChange={(event) => {
-                setWebhookDraft(event.target.value)
-                if (webhookError) setWebhookError('')
-              }}
-              placeholder="Paste your n8n webhook URL here…"
-              aria-label="n8n Webhook URL"
-              inputMode="url"
-              spellCheck={false}
-            />
-            <button type="button" onClick={saveWebhook}>
-              <Link2 size={16} /> Use URL
-            </button>
-            <button
-              className="reset-webhook"
-              type="button"
-              onClick={resetWebhook}
-              aria-label="Reset webhook URL"
-              title="Reset to default webhook"
-            >
-              <RotateCcw size={16} />
-            </button>
-          </div>
-          {webhookError ? <div className="webhook-error">{webhookError}</div> : null}
-          <div className="webhook-note">
-            Saved on this device. Change it anytime to connect Friday to another n8n webhook.
-          </div>
-        </section>
 
-        <section className="console glass">
-          <div className="console-head">
-            <div>
-              <span className="section-kicker">LIVE SESSION</span>
-              <h2>Command stream</h2>
+            <div className="dash-card">
+              <div className="card-icon"><Gauge size={20} /></div>
+              <span className="section-kicker">SESSION</span>
+              <h2>Friday status</h2>
+              <div className="metric"><strong>{messages.length}</strong><span>messages</span></div>
+              <div className="metric"><strong>{latency ?? '—'}</strong><span>last response ms</span></div>
+              <div className="metric"><strong>{handsFree ? 'ON' : 'OFF'}</strong><span>hands-free</span></div>
             </div>
-            <div className="secure">
-              <ShieldCheck size={15} /> webhook connected
-            </div>
-          </div>
 
-          <div className="messages">
+            <div className="dash-card">
+              <div className="card-icon"><Radio size={20} /></div>
+              <span className="section-kicker">VOICE</span>
+              <h2>Interaction mode</h2>
+              <button className="mode-btn" onClick={() => { setView('handsfree'); setHandsFree(true); handsFreeRef.current = true; startListening() }} type="button"><Mic size={17} /> Open hands-free</button>
+              <button className="mode-btn" onClick={() => setView('chat')} type="button"><MessageSquare size={17} /> Open chat</button>
+            </div>
+          </section>
+        </main>
+      ) : view === 'chat' ? (
+        <main className="chat-page">
+          <div className="chat-header">
+            <button className="back-btn" onClick={() => setView('friday')} type="button"><ChevronLeft size={17} /> Friday</button>
+            <div><span className="section-kicker">CONVERSATION</span><h2>Chat with Friday</h2></div>
+            <button className="icon-btn" onClick={() => setView('handsfree')} type="button"><Mic size={18} /></button>
+          </div>
+          <div className="chat-list">
             {messages.map((message, index) => (
-              <div
-                key={`${message.time}-${index}`}
-                className={`msg ${message.role}`}
-              >
-                <div className="avatar">
-                  {message.role === 'friday' ? 'F' : 'YOU'}
-                </div>
-                <div>
-                  <div className="msg-meta">
-                    {message.role === 'friday' ? 'FRIDAY' : 'YOU'} ·{' '}
-                    {message.time}
-                  </div>
-                  <div className="bubble">{message.text}</div>
-                </div>
+              <div className={`chat-message ${message.role}`} key={`${message.time}-${index}`}>
+                <div className="chat-avatar">{message.role === 'friday' ? <Sparkles size={15} /> : 'YOU'}</div>
+                <div><span className="chat-meta">{message.role === 'friday' ? 'FRIDAY' : 'YOU'} · {message.time}</span><p>{message.text}</p></div>
               </div>
             ))}
           </div>
-
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              void send(undefined, 'text')
-            }}
-            className="composer"
-          >
-            <input
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder="Type a command or use the microphone…"
-              aria-label="Message Friday"
-            />
-            <button type="submit" aria-label="Send message">
-              <Send size={18} />
-            </button>
+          <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}>
+            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Message Friday…" aria-label="Message Friday" />
+            <button type="submit" aria-label="Send"><Send size={18} /></button>
+            <button type="button" className="voice-send" onClick={() => { setHandsFree(true); handsFreeRef.current = true; startListening() }} aria-label="Voice"><Mic size={18} /></button>
           </form>
-        </section>
-      </main>
+        </main>
+      ) : view === 'handsfree' ? (
+        <main className="handsfree-page">
+          <div className="mode-top">
+            <button className="back-btn" onClick={() => { stopListening(); setView('friday') }} type="button"><ChevronLeft size={17} /> Friday</button>
+            <span className="section-kicker">HANDS-FREE</span>
+          </div>
 
-      <footer>FRIDAY CORE · n8n orchestration · Voice interface</footer>
+          <div className={`talking-core ${listening ? 'listening' : ''} ${status === 'thinking' ? 'thinking' : ''} ${isActive ? 'active' : ''}`}>
+            <div className="pulse pulse-one" /><div className="pulse pulse-two" /><div className="pulse pulse-three" />
+            <div className="core-orbit orbit-one" /><div className="core-orbit orbit-two" />
+            <div className="friday-core"><Sparkles size={42} /></div>
+          </div>
+
+          <div className="talk-state">
+            <span>{status === 'thinking' ? 'FRIDAY IS THINKING' : listening ? 'LISTENING TO YOU' : 'FRIDAY IS READY'}</span>
+            <h1>{status === 'thinking' ? 'One moment…' : listening ? 'I’m listening.' : 'Talk to me.'}</h1>
+            <p>{status === 'thinking' ? 'Processing your command through the automation layer.' : lastFriday?.text ?? 'Say something and Friday will answer you.'}</p>
+          </div>
+
+          <div className="waveform" aria-hidden="true">
+            {Array.from({ length: 28 }).map((_, i) => <i key={i} style={{ animationDelay: `${i * -55}ms` }} />)}
+          </div>
+
+          <div className="voice-actions">
+            <button className={`round-action ${listening ? 'on' : ''}`} onClick={listening ? stopListening : startListening} type="button" aria-label={listening ? 'Stop listening' : 'Start listening'}>
+              {listening ? <MicOff size={22} /> : <Mic size={22} />}
+            </button>
+            <button className={`round-action ${handsFree ? 'on' : ''}`} onClick={toggleHandsFree} type="button" aria-label="Toggle hands-free">
+              <Radio size={21} />
+            </button>
+            <button className="round-action" onClick={() => setSpeaking((v) => !v)} type="button" aria-label="Toggle voice output">
+              {speaking ? <Volume2 size={21} /> : <VolumeX size={21} />}
+            </button>
+          </div>
+        </main>
+      ) : (
+        <main className="friday-page">
+          <div className="hero-copy">
+            <span className="eyebrow"><Bot size={14} /> YOUR AI COMMAND LAYER</span>
+            <h1>I’m <span>Friday.</span></h1>
+            <p>Speak naturally. I’ll handle the automation.</p>
+          </div>
+
+          <div className={`friday-orb ${status === 'thinking' ? 'thinking' : ''}`}>
+            <div className="orb-ring ring-a" /><div className="orb-ring ring-b" /><div className="orb-ring ring-c" />
+            <div className="orb-core"><Sparkles size={38} /></div>
+          </div>
+
+          <div className="friday-response">
+            <span>{status === 'thinking' ? 'PROCESSING' : 'FRIDAY'}</span>
+            <p>{status === 'thinking' ? 'Give me a second…' : lastFriday?.text}</p>
+          </div>
+
+          <div className="home-actions">
+            <button className="primary-action" onClick={() => { setHandsFree(true); handsFreeRef.current = true; startListening() }} type="button">
+              <Mic size={20} /> Talk to Friday
+            </button>
+            <button className="secondary-action" onClick={() => setView('chat')} type="button">
+              <MessageSquare size={18} /> Chat
+            </button>
+          </div>
+
+          <div className="home-footer">
+            <button onClick={() => setView('dashboard')} type="button"><BarChart3 size={15} /> Dashboard</button>
+            <span><i /> {webhookUrl.replace(/^https?:\/\//, '').split('/')[0]}</span>
+          </div>
+        </main>
+      )}
     </div>
   )
 }
