@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mic, MicOff, Send, Volume2, VolumeX, Activity, Radio, Sparkles, ShieldCheck } from 'lucide-react'
+import { Mic, MicOff, Send, Volume2, VolumeX, Activity, Radio, Sparkles, ShieldCheck, Link2, RotateCcw } from 'lucide-react'
 
-const WEBHOOK =
+const DEFAULT_WEBHOOK =
   (import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined)?.trim() ||
   'https://akpackfitness.app.n8n.cloud/webhook/friday-core'
+
+const WEBHOOK_STORAGE_KEY = 'friday-n8n-webhook-url'
 
 type Message = { role: 'user' | 'friday'; text: string; time: string }
 type InputMode = 'text' | 'voice'
@@ -27,6 +29,23 @@ const getSessionId = () => {
   }
 }
 
+const getSavedWebhook = () => {
+  try {
+    return window.localStorage.getItem(WEBHOOK_STORAGE_KEY)?.trim() || DEFAULT_WEBHOOK
+  } catch {
+    return DEFAULT_WEBHOOK
+  }
+}
+
+const isValidWebhookUrl = (value: string) => {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -41,17 +60,54 @@ export default function App() {
   const [speaking, setSpeaking] = useState(true)
   const [status, setStatus] = useState<'ready' | 'thinking' | 'error'>('ready')
   const [latency, setLatency] = useState<number | null>(null)
+  const [webhookUrl, setWebhookUrl] = useState(DEFAULT_WEBHOOK)
+  const [webhookDraft, setWebhookDraft] = useState(DEFAULT_WEBHOOK)
+  const [webhookError, setWebhookError] = useState('')
   const recognitionRef = useRef<any>(null)
   const handsFreeRef = useRef(false)
   const sessionIdRef = useRef('')
 
   useEffect(() => {
     sessionIdRef.current = getSessionId()
+    const saved = getSavedWebhook()
+    setWebhookUrl(saved)
+    setWebhookDraft(saved)
   }, [])
 
   useEffect(() => {
     handsFreeRef.current = handsFree
   }, [handsFree])
+
+  const saveWebhook = () => {
+    const value = webhookDraft.trim()
+    if (!isValidWebhookUrl(value)) {
+      setWebhookError('Enter a valid http:// or https:// n8n webhook URL.')
+      return
+    }
+    setWebhookUrl(value)
+    setWebhookDraft(value)
+    setWebhookError('')
+    try {
+      window.localStorage.setItem(WEBHOOK_STORAGE_KEY, value)
+    } catch {
+      // The active URL still works for this session if storage is unavailable.
+    }
+    setStatus('ready')
+    addFridayMessage(`Webhook updated. Friday is now connected to ${value}`)
+  }
+
+  const resetWebhook = () => {
+    setWebhookDraft(DEFAULT_WEBHOOK)
+    setWebhookUrl(DEFAULT_WEBHOOK)
+    setWebhookError('')
+    try {
+      window.localStorage.removeItem(WEBHOOK_STORAGE_KEY)
+    } catch {
+      // Ignore storage errors.
+    }
+    setStatus('ready')
+    addFridayMessage('Webhook reset to the default Friday Core endpoint.')
+  }
 
   const say = (text: string) => {
     if (!speaking || !('speechSynthesis' in window)) return
@@ -83,7 +139,7 @@ export default function App() {
     const started = performance.now()
 
     try {
-      const response = await fetch(WEBHOOK, {
+      const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -302,6 +358,47 @@ export default function App() {
               {speaking ? <Volume2 size={17} /> : <VolumeX size={17} />} Voice{' '}
               {speaking ? 'ON' : 'OFF'}
             </button>
+          </div>
+        </section>
+
+        <section className="webhook-panel glass">
+          <div className="webhook-title">
+            <div>
+              <span className="section-kicker">N8N CONNECTION</span>
+              <h2>Webhook endpoint</h2>
+            </div>
+            <div className="secure">
+              <Link2 size={15} /> {webhookUrl}
+            </div>
+          </div>
+          <div className="webhook-form">
+            <input
+              value={webhookDraft}
+              onChange={(event) => {
+                setWebhookDraft(event.target.value)
+                if (webhookError) setWebhookError('')
+              }}
+              placeholder="Paste your n8n webhook URL here…"
+              aria-label="n8n Webhook URL"
+              inputMode="url"
+              spellCheck={false}
+            />
+            <button type="button" onClick={saveWebhook}>
+              <Link2 size={16} /> Use URL
+            </button>
+            <button
+              className="reset-webhook"
+              type="button"
+              onClick={resetWebhook}
+              aria-label="Reset webhook URL"
+              title="Reset to default webhook"
+            >
+              <RotateCcw size={16} />
+            </button>
+          </div>
+          {webhookError ? <div className="webhook-error">{webhookError}</div> : null}
+          <div className="webhook-note">
+            Saved on this device. Change it anytime to connect Friday to another n8n webhook.
           </div>
         </section>
 
