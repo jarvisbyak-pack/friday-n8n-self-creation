@@ -135,7 +135,10 @@ export default function App() {
       const started = performance.now()
       const response = await fetch(webhookUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // text/plain is a CORS-safelisted request content type, so the browser does not
+        // send an OPTIONS preflight to the POST-only n8n webhook. The Guard node
+        // already accepts and JSON-parses a string request body.
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           source: 'friday-web-ui',
           message,
